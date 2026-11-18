@@ -89,6 +89,10 @@ class Store:
         self._channels: dict[str, DataChannelEvent] = {}
         # 失败恢复记录：recovery_id → FailureRecovery
         self._failures: dict[str, FailureRecovery] = {}
+        # 检查点裁剪版本登记：记录被裁剪快照、替代关系与归档恢复情况
+        self._pruned_checkpoints: list[dict[str, Any]] = []
+        # 回放待办：供其他入口（详情页、权限页、血缘页）同步回放任务待办
+        self._replay_todos: list[dict[str, Any]] = []
 
     # ---- 跨模块数据通道 ----
 
@@ -213,6 +217,29 @@ class Store:
             "resolved": resolved_count,
             "escalated": escalated_count,
         }
+
+    # ---- 检查点裁剪版本与回放待办 ----
+
+    def pruned_checkpoint_registry(self) -> list[dict[str, Any]]:
+        """检查点裁剪版本登记表（回放验证报告追溯被裁剪版本）。"""
+        return self._pruned_checkpoints
+
+    def replay_todos(self) -> list[dict[str, Any]]:
+        """回放待办列表：各入口共享同一份待办，保证连续提交只生效一次。"""
+        return self._replay_todos
+
+    def upsert_replay_todo(self, todo: dict[str, Any]) -> dict[str, Any]:
+        """按幂等键 upsert 回放待办；相同键的重复提交只记一次。"""
+        key = todo.get("idempotency_key")
+        for existing in self._replay_todos:
+            if existing.get("idempotency_key") == key:
+                existing.update({k: v for k, v in todo.items() if k != "idempotency_key"})
+                existing["updated_at"] = time.time()
+                return existing
+        todo = dict(todo)
+        todo.setdefault("created_at", time.time())
+        self._replay_todos.append(todo)
+        return todo
 
     # ---- 基础 CRUD ----
 
